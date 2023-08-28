@@ -8,7 +8,7 @@ lxc_create container_name: ensure_lxc
         echo -e "container info:\n$( {{lxcbin}} list name={{container_name}} -c ns)"
     }
 
-    info=$({{lxcbin}} list name={{container_name}} -f json)
+    info=$({{lxcbin}} list {{container_name}} -f json)
     if [[ "${info}" != "[]" ]]; then
         show_info
         exit 0
@@ -18,15 +18,16 @@ lxc_create container_name: ensure_lxc
     {{lxcbin}} launch images:centos/8-Stream {{container_name}}
     set +x
     # sleep some time ...
-    {{lxcbin}} exec ${{container_name}} -- sleep 5
+    # {{lxcbin}} exec ${{container_name}} -- sleep 5
     show_info
 
-lxc_setup container_name: (lxc_create container_name)
+lxc_setup container_name:
     #!/usr/bin/env bash
     set -euo pipefail
 
     cat <<EOF| {{lxcbin}} exec {{container_name}} bash
     echo "In container..."
+    dnf update -y
     if ! grep "fastestmirror" /etc/dnf/dnf.conf; then
         echo -e "\nfastestmirror=1" >> /etc/dnf/dnf.conf
     fi
@@ -34,10 +35,14 @@ lxc_setup container_name: (lxc_create container_name)
     dnf install -y epel-release dnf-plugins-core
     dnf config-manager --set-enabled powertools
     dnf install -y git wget python39
-    python3 -m venv ansible
+    python3.9 -m pip install --upgrade pip
+    python3.9 -m pip install --upgrade pandas
+    python3.9 -m venv ansible
     source ansible/bin/activate
-    python3 -m pip install --upgrade pip
-    python3 -m pip install --upgrade ansible
+    python3.9 -m pip install --upgrade pip
+    python3.9 -m pip install --upgrade ansible
+    git clone https://github.com/IQSS/dataverse.git dataverse_src
+    git clone https://github.com/toltec-astro/dvpipe.git dvpipe
     git clone -b lxc_centos8 https://github.com/Jerry-Ma/dataverse-ansible dataverse
     ansible-playbook --connection=local -vv -i dataverse/inventory dataverse/dataverse.pb -e "@dataverse/defaults/main.yml"
     EOF
@@ -47,3 +52,16 @@ lxc_ports container_name http_port="80" https_port="443": (lxc_create container_
           listen=tcp:0.0.0.0:80 connect=tcp:127.0.0.1:80
     {{lxcbin}} config device add {{container_name}} https proxy \
           listen=tcp:0.0.0.0:443 connect=tcp:127.0.0.1:443
+
+dv_certbot container_name fqdn email:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    cat <<EOF| {{lxcbin}} exec {{container_name}} bash
+    echo "In container..."
+
+    dnf install -y certbot python3-certbot-apache
+    certbot certonly --webroot --noninteractive --agree-tos --email {{email}} -d {{fqdn}} -w /var/www/html
+    certbot install --apache
+    systemctl enable --now certbot-renew.timer
+    EOF
